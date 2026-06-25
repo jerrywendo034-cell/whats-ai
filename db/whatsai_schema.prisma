@@ -1,0 +1,445 @@
+// Whats AI — Complete Prisma Schema
+// File: prisma/schema.prisma
+//
+// Setup:
+//   npm install prisma @prisma/client
+//   npx prisma init
+//   Replace contents of prisma/schema.prisma with this file
+//   npx prisma migrate dev --name init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// BUSINESSES
+// Every store using Whats AI is a business.
+// All other tables are scoped to a business_id.
+// ─────────────────────────────────────────────
+
+model Business {
+  id                 String             @id @default(uuid())
+  business_name      String
+  owner_name         String
+  email              String             @unique
+  phone              String
+  whatsapp_number    String             @unique
+  mpesa_till         String?            // Safaricom Till number
+  mpesa_paybill      String?            // Safaricom Paybill number
+  mpesa_account      String?            // Account name for Paybill
+  subscription_plan  SubscriptionPlan   @default(STARTER)
+  status             BusinessStatus     @default(ACTIVE)
+  ai_enabled         Boolean            @default(true)
+  logo_url           String?
+  created_at         DateTime           @default(now())
+  updated_at         DateTime           @updatedAt
+
+  // Relations
+  products           Product[]
+  customers          Customer[]
+  orders             Order[]
+  conversations      Conversation[]
+  negotiations       Negotiation[]
+  staff              Staff[]
+  audit_logs         AuditLog[]
+
+  @@map("businesses")
+}
+
+enum SubscriptionPlan {
+  STARTER
+  GROWTH
+  ENTERPRISE
+}
+
+enum BusinessStatus {
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
+// ─────────────────────────────────────────────
+// STAFF
+// Business owners can add staff to the dashboard.
+// ─────────────────────────────────────────────
+
+model Staff {
+  id          String    @id @default(uuid())
+  business_id String
+  name        String
+  email       String
+  role        StaffRole @default(STAFF)
+  created_at  DateTime  @default(now())
+
+  business    Business  @relation(fields: [business_id], references: [id], onDelete: Cascade)
+
+  @@unique([business_id, email])
+  @@map("staff")
+}
+
+enum StaffRole {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+// ─────────────────────────────────────────────
+// PRODUCTS
+// Each product belongs to a business.
+// Negotiation rules are set per product.
+// ─────────────────────────────────────────────
+
+model Product {
+  id                   String           @id @default(uuid())
+  business_id          String
+  name                 String
+  description          String?
+  category             String?
+  price                Decimal          @db.Decimal(10, 2)
+  minimum_price        Decimal?         @db.Decimal(10, 2) // floor for negotiation
+  stock                Int              @default(0)        // total across all variants
+  negotiation_enabled  Boolean          @default(false)
+  max_negotiation_rounds Int            @default(5)
+  image_url            String?
+  is_active            Boolean          @default(true)
+  created_at           DateTime         @default(now())
+  updated_at           DateTime         @updatedAt
+
+  // Relations
+  business             Business         @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  variants             ProductVariant[]
+  order_items          OrderItem[]
+  negotiations         Negotiation[]
+
+  @@index([business_id])
+  @@map("products")
+}
+
+// ─────────────────────────────────────────────
+// PRODUCT VARIANTS
+// Size and colour combinations for each product.
+// Stock is tracked at variant level to prevent overselling.
+// ─────────────────────────────────────────────
+
+model ProductVariant {
+  id          String      @id @default(uuid())
+  product_id  String
+  size        String?     // S, M, L, XL, XXL, 30, 32 etc.
+  color       String?     // Black, White, Grey etc.
+  sku         String?     // optional internal code
+  stock       Int         @default(0)
+  created_at  DateTime    @default(now())
+  updated_at  DateTime    @updatedAt
+
+  // Relations
+  product     Product     @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  order_items OrderItem[]
+
+  @@index([product_id])
+  @@map("product_variants")
+}
+
+// ─────────────────────────────────────────────
+// CUSTOMERS
+// Auto-created when a customer first contacts the store.
+// Scoped to business — the same phone number is a different
+// customer record across different businesses.
+// ─────────────────────────────────────────────
+
+model Customer {
+  id              String        @id @default(uuid())
+  business_id     String
+  name            String?       // captured during conversation
+  phone           String        // WhatsApp number
+  email           String?
+  customer_type   CustomerType  @default(NEW)
+  total_spent     Decimal       @default(0) @db.Decimal(10, 2)
+  orders_count    Int           @default(0)
+  last_seen_at    DateTime?
+  opted_in        Boolean       @default(false) // WhatsApp opt-in
+  created_at      DateTime      @default(now())
+  updated_at      DateTime      @updatedAt
+
+  // Relations
+  business        Business      @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  orders          Order[]
+  conversations   Conversation[]
+  negotiations    Negotiation[]
+
+  @@unique([business_id, phone])
+  @@index([business_id])
+  @@map("customers")
+}
+
+enum CustomerType {
+  NEW
+  RETURNING
+  VIP
+}
+
+// ─────────────────────────────────────────────
+// ORDERS
+// Created when a customer confirms a purchase.
+// ─────────────────────────────────────────────
+
+model Order {
+  id              String        @id @default(uuid())
+  business_id     String
+  customer_id     String
+  subtotal        Decimal       @db.Decimal(10, 2)
+  delivery_fee    Decimal       @default(0) @db.Decimal(10, 2)
+  discount        Decimal       @default(0) @db.Decimal(10, 2)
+  total           Decimal       @db.Decimal(10, 2)
+  status          OrderStatus   @default(PENDING)
+  closed_by       ClosedBy      @default(AI)
+  notes           String?
+  created_at      DateTime      @default(now())
+  updated_at      DateTime      @updatedAt
+
+  // Relations
+  business        Business      @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  customer        Customer      @relation(fields: [customer_id], references: [id])
+  items           OrderItem[]
+  payment         Payment?
+  delivery        Delivery?
+
+  @@index([business_id])
+  @@index([customer_id])
+  @@map("orders")
+}
+
+enum OrderStatus {
+  PENDING       // order created, payment not yet made
+  PAID          // payment confirmed
+  PACKED        // store has packed the item
+  DISPATCHED    // handed to rider
+  DELIVERED     // customer received
+  CANCELLED     // order cancelled
+  REFUNDED      // refund issued
+}
+
+enum ClosedBy {
+  AI
+  MANUAL
+}
+
+// ─────────────────────────────────────────────
+// ORDER ITEMS
+// One order can contain multiple products.
+// ─────────────────────────────────────────────
+
+model OrderItem {
+  id            String          @id @default(uuid())
+  order_id      String
+  product_id    String
+  variant_id    String?
+  quantity      Int
+  unit_price    Decimal         @db.Decimal(10, 2) // price at time of order
+  final_price   Decimal         @db.Decimal(10, 2) // after any negotiation
+
+  // Relations
+  order         Order           @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  product       Product         @relation(fields: [product_id], references: [id])
+  variant       ProductVariant? @relation(fields: [variant_id], references: [id])
+
+  @@index([order_id])
+  @@map("order_items")
+}
+
+// ─────────────────────────────────────────────
+// PAYMENTS
+// M-Pesa STK push results.
+// One payment per order.
+// ─────────────────────────────────────────────
+
+model Payment {
+  id              String          @id @default(uuid())
+  order_id        String          @unique
+  mpesa_receipt   String?         // Safaricom transaction ID
+  phone           String          // number that paid
+  amount          Decimal         @db.Decimal(10, 2)
+  status          PaymentStatus   @default(PENDING)
+  checkout_request_id String?     // Daraja STK push ID
+  payment_date    DateTime?
+  created_at      DateTime        @default(now())
+  updated_at      DateTime        @updatedAt
+
+  // Relations
+  order           Order           @relation(fields: [order_id], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  TIMEOUT
+  REFUNDED
+}
+
+// ─────────────────────────────────────────────
+// DELIVERY
+// Rider info and delivery tracking.
+// ─────────────────────────────────────────────
+
+model Delivery {
+  id              String          @id @default(uuid())
+  order_id        String          @unique
+  rider_name      String?
+  rider_phone     String?
+  courier_name    String?         // for courier integrations later
+  tracking_number String?
+  status          DeliveryStatus  @default(PENDING)
+  expected_at     DateTime?
+  delivered_at    DateTime?
+  notes           String?
+  created_at      DateTime        @default(now())
+  updated_at      DateTime        @updatedAt
+
+  // Relations
+  order           Order           @relation(fields: [order_id], references: [id], onDelete: Cascade)
+
+  @@map("deliveries")
+}
+
+enum DeliveryStatus {
+  PENDING
+  ASSIGNED
+  IN_TRANSIT
+  DELIVERED
+  FAILED
+}
+
+// ─────────────────────────────────────────────
+// NEGOTIATIONS
+// Tracks the full negotiation history per session.
+// ─────────────────────────────────────────────
+
+model Negotiation {
+  id              String              @id @default(uuid())
+  business_id     String
+  customer_id     String
+  product_id      String
+  starting_price  Decimal             @db.Decimal(10, 2)
+  current_offer   Decimal             @db.Decimal(10, 2) // customer's latest offer
+  minimum_price   Decimal             @db.Decimal(10, 2)
+  agreed_price    Decimal?            @db.Decimal(10, 2) // final agreed price if success
+  rounds_used     Int                 @default(0)
+  max_rounds      Int                 @default(5)
+  status          NegotiationStatus   @default(ACTIVE)
+  created_at      DateTime            @default(now())
+  updated_at      DateTime            @updatedAt
+
+  // Relations
+  business        Business            @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  customer        Customer            @relation(fields: [customer_id], references: [id])
+  product         Product             @relation(fields: [product_id], references: [id])
+
+  @@index([business_id])
+  @@index([customer_id])
+  @@map("negotiations")
+}
+
+enum NegotiationStatus {
+  ACTIVE
+  ACCEPTED
+  REJECTED
+  EXPIRED     // customer disappeared after negotiating
+}
+
+// ─────────────────────────────────────────────
+// CONVERSATIONS
+// One conversation = one WhatsApp session.
+// ─────────────────────────────────────────────
+
+model Conversation {
+  id           String             @id @default(uuid())
+  business_id  String
+  customer_id  String
+  channel      String             @default("whatsapp")
+  status       ConversationStatus @default(ACTIVE)
+  agent_type   String?            // SALES | NEGOTIATE | SUPPORT | PAYMENT
+  started_at   DateTime           @default(now())
+  ended_at     DateTime?
+
+  // Relations
+  business     Business           @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  customer     Customer           @relation(fields: [customer_id], references: [id])
+  messages     Message[]
+
+  @@index([business_id])
+  @@index([customer_id])
+  @@map("conversations")
+}
+
+enum ConversationStatus {
+  ACTIVE
+  RESOLVED
+  ESCALATED  // handed to human owner
+}
+
+// ─────────────────────────────────────────────
+// MESSAGES
+// Every message in every conversation.
+// ─────────────────────────────────────────────
+
+model Message {
+  id               String      @id @default(uuid())
+  conversation_id  String
+  sender           MessageSender
+  message_type     MessageType @default(TEXT)
+  content          String
+  media_url        String?     // for images / voice notes
+  created_at       DateTime    @default(now())
+
+  // Relations
+  conversation     Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+
+  @@index([conversation_id])
+  @@map("messages")
+}
+
+enum MessageSender {
+  CUSTOMER
+  AI
+  OWNER     // when owner manually replies
+  SYSTEM    // automated system messages
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VOICE
+  SYSTEM
+}
+
+// ─────────────────────────────────────────────
+// AUDIT LOGS
+// Every sensitive action is logged.
+// Who changed what, and when.
+// ─────────────────────────────────────────────
+
+model AuditLog {
+  id          String    @id @default(uuid())
+  business_id String
+  actor       String    // email of who did the action
+  action      String    // e.g. "product.price.updated"
+  entity      String    // e.g. "product"
+  entity_id   String    // e.g. the product UUID
+  old_value   Json?     // value before change
+  new_value   Json?     // value after change
+  created_at  DateTime  @default(now())
+
+  // Relations
+  business    Business  @relation(fields: [business_id], references: [id], onDelete: Cascade)
+
+  @@index([business_id])
+  @@index([entity_id])
+  @@map("audit_logs")
+}
