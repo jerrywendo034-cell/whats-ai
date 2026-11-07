@@ -434,31 +434,3 @@ export const customerRelations = relations(customer, ({ many }) => ({
   fraudFlags: many(fraudFlag),
 }));
 
-// ─────────────────────────────────────────────
-// drizzle.config.ts
-// ─────────────────────────────────────────────
-
-/*
-import { defineConfig } from "drizzle-kit";
-
-export default defineConfig({
-  schema: ["./db/schema.ts", "./db/auth-schema.ts"],
-  out: "./drizzle",
-  dialect: "postgresql",
-  dbCredentials: {
-    url: process.env.DATABASE_URL!,
-  },
-});
-*/
-
-// ─────────────────────────────────────────────
-// db/index.ts — connection setup for Vercel Postgres
-// ─────────────────────────────────────────────
-
-/*
-import { drizzle } from "drizzle-orm/vercel-postgres";
-import { sql } from "@vercel/postgres";
-import * as schema from "./schema";
-
-export const db = drizzle(sql, { schema });
-*/
