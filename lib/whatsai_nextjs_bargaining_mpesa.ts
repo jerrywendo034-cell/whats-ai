@@ -3,8 +3,12 @@ import { store } from "./store";
 import type { Negotiation, Product } from "./types";
 
 export function extractOffer(text: string) {
-  const match = text.replace(/,/g, "").match(/(?:kes|ksh|/=)?\s*(\d{2,7})/i);
+  const match = text
+    .replace(/,/g, "")
+    .match(/(?:kes|ksh|\/=)?\s*(\d{2,7})/i);
+
   if (!match) return null;
+
   return Number(match[1]);
 }
 
@@ -68,15 +72,28 @@ export function bargain(product: Product, customerId: string, text: string) {
     };
   }
 
-  if (negotiation.roundsUsed + 1 >= negotiation.maxRounds) {
-    negotiation.roundsUsed = negotiation.maxRounds;
-    negotiation.status = "REJECTED";
+ if (negotiation.roundsUsed + 1 >= negotiation.maxRounds) {
+  negotiation.roundsUsed = negotiation.maxRounds;
+  negotiation.currentAsk = negotiation.minimumPrice;
+  store.upsertNegotiation(negotiation);
+
+  if (offer >= negotiation.minimumPrice) {
+    negotiation.status = "ACCEPTED";
+    negotiation.agreedPrice = negotiation.minimumPrice;
     store.upsertNegotiation(negotiation);
+
     return {
-      accepted: false,
-      reply: `I have used all ${negotiation.maxRounds} rounds. I cannot go below ${kes(ask)} on ${product.name} without hurting the shop. Say "I'll take it" at ${kes(ask)} or pick another item.`,
+      accepted: true,
+      price: negotiation.minimumPrice,
+      reply: `Deal. ${product.name} at ${kes(negotiation.minimumPrice)}. Reply "pay" and I will send the M-Pesa prompt to Till ${business.mpesaTill}.`,
     };
   }
+
+  return {
+    accepted: false,
+    reply: `Final round ${negotiation.maxRounds}/${negotiation.maxRounds}: the lowest I can do is ${kes(negotiation.minimumPrice)} for ${product.name}. Say "I'll take it" at ${kes(negotiation.minimumPrice)} or pick another item.`,
+  };
+}
 
   negotiation.roundsUsed += 1;
   negotiation.currentAsk = askingPrice(negotiation);

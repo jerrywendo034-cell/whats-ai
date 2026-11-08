@@ -49,10 +49,25 @@ export function matchProduct(text: string) {
 }
 
 function lastMentionedProduct(customerId: string) {
+  const conversation = store
+    .conversations()
+    .find((c) => c.customerId === customerId && c.status === "ACTIVE");
+
+  if (conversation) {
+    const messages = store.messages(conversation.id);
+
+    for (const message of [...messages].reverse()) {
+      const product = matchProduct(message.content);
+      if (product) return product;
+    }
+  }
+
   const negotiation = store.activeNegotiation(customerId);
   if (negotiation) return store.findProduct(negotiation.productId);
+
   const orders = store.customerOrders(customerId);
   if (orders[0]) return store.findProduct(orders[0].productId);
+
   return undefined;
 }
 
@@ -117,7 +132,9 @@ export function generateReply(customerId: string, text: string) {
   }
 
   if (/(paid|nimetuma|done paying)/.test(t)) {
-    const pending = store.customerOrders(customerId).find((o) => o.status === "PENDING");
+   const pending = [...store.customerOrders(customerId)]
+  .reverse()
+  .find((o) => o.status === "PENDING");
     if (!pending) {
       return { agentType: "PAYMENT" as const, reply: "I do not have a pending payment on this chat." };
     }
@@ -135,7 +152,8 @@ export function generateReply(customerId: string, text: string) {
         reply: `Which product should I charge? Catalog:\n\n${catalogText(products)}`,
       };
     }
-    const negotiation = store.activeNegotiation(customerId, product.id);
+    const negotiation =
+  store.latestNegotiation(customerId, product.id);
     const price = negotiation?.agreedPrice ?? negotiation?.currentAsk ?? product.price;
     const placed = placeOrder(customerId, product, price);
     return { agentType: "PAYMENT" as const, reply: placed.reply };
@@ -152,17 +170,17 @@ export function generateReply(customerId: string, text: string) {
     return { agentType: "NEGOTIATION" as const, reply: result.reply };
   }
 
-  if (product) {
-    return {
-      agentType: "SALES" as const,
-      reply: `${product.name}: ${product.description}\nPrice ${kes(product.price)}${product.negotiationEnabled ? ` (bargaining allowed, floor protected, max 5 rounds)` : " (fixed price)"}.\nStock ${product.stock}.\nSay "I'll take it" to order, or send an offer if you want to bargain.`,
-    };
-  }
-
+if (product) {
   return {
     agentType: "SALES" as const,
-    reply: `Hi — I am the Whats AI sales assistant for ${business.businessName}. I sell, bargain (up to 5 rounds), take M-Pesa, and track orders. I do not deliver packages myself.\n\n${catalogText(products)}\n\nWhat are you looking for?`,
+    reply: `${product.name}: ${product.description}\nPrice ${kes(product.price)}${product.negotiationEnabled ? ` (bargaining allowed, floor protected, max 5 rounds)` : " (fixed price)"}.\nStock ${product.stock}.\n${product.negotiationEnabled ? `Say "I'll take it" to order, or send an offer if you want to bargain.` : `This item has a fixed price. Say "I'll take it" to order.`}`,
   };
+}
+
+return {
+  agentType: "SALES" as const,
+  reply: `Hi — I am the Whats AI sales assistant for ${business.businessName}. I sell, bargain (up to 5 rounds), take M-Pesa, and track orders. I do not deliver packages myself.\n\n${catalogText(products)}\n\nWhat are you looking for?`,
+};
 }
 
 function extractLooksLikeOffer(text: string, product: Product | undefined) {

@@ -244,6 +244,17 @@ export const store = {
     );
   },
 
+ latestNegotiation(customerId: string, productId?: string) {
+  return [...data().negotiations]
+    .reverse()
+    .find(
+      (n) =>
+        n.customerId === customerId &&
+        n.productId === productId &&
+        n.status === "ACCEPTED",
+    );
+},
+
   upsertNegotiation(negotiation: Negotiation) {
     const d = data();
     const index = d.negotiations.findIndex((n) => n.id === negotiation.id);
