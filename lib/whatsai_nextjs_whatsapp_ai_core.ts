@@ -113,51 +113,49 @@ export function generateReply(customerId: string, text: string) {
     };
   }
 
-  if (agentType === "SUPPORT") {
-    const orders = store.customerOrders(customerId);
+ if (agentType === "SUPPORT") {
+    const orders = [...store.customerOrders(customerId)].reverse();
+
     if (!orders.length) {
       return {
         agentType,
         reply: `I do not see an order on this number yet. Tell me the product you want, or send an M-Pesa receipt if you already paid.`,
       };
     }
-    const lines = orders.map((o) => {
-      const item = store.findProduct(o.productId);
-      return `• ${item?.name || "Item"} — ${kes(o.total)} — ${o.status}`;
-    });
+
+    const latestOrder = orders[0];
+    const item = store.findProduct(latestOrder.productId);
+
     return {
       agentType,
-      reply: `Here is your order progress (Whats AI tracks status; delivery is by the shop or their courier):\n\n${lines.join("\n")}\n\nIf something moved, the merchant updates this from the dashboard.`,
+      reply: `Here is your latest order progress (Whats AI tracks status; delivery is by the shop or their courier):\n\n• ${item?.name || "Item"} — ${kes(latestOrder.total)} — ${latestOrder.status}\n\nIf something moved, the merchant updates this from the dashboard.`,
     };
   }
 
-  if (/(paid|nimetuma|done paying)/.test(t)) {
-   const pending = [...store.customerOrders(customerId)]
-  .reverse()
-  .find((o) => o.status === "PENDING");
-    if (!pending) {
-      return { agentType: "PAYMENT" as const, reply: "I do not have a pending payment on this chat." };
-    }
-    const receipt = completeDemoPayment(pending.id);
+if (agentType === "PAYMENT" || /(i'll take|i will take|deal|ok take it)/.test(t)) {
+  if (!product) {
     return {
       agentType: "PAYMENT" as const,
-      reply: `Payment confirmed (demo). Receipt ${receipt}. Status is now PAID. The shop will pack and then update DISPATCHED / DELIVERED. I will keep you posted.`,
+      reply: `Which product should I charge? Catalog:\n\n${catalogText(products)}`,
     };
   }
 
-  if (agentType === "PAYMENT" || /(i'll take|i will take|deal|ok take it)/.test(t)) {
-    if (!product) {
-      return {
-        agentType: "PAYMENT" as const,
-        reply: `Which product should I charge? Catalog:\n\n${catalogText(products)}`,
-      };
-    }
-    const negotiation =
-  store.latestNegotiation(customerId, product.id);
-    const price = negotiation?.agreedPrice ?? negotiation?.currentAsk ?? product.price;
-    const placed = placeOrder(customerId, product, price);
-    return { agentType: "PAYMENT" as const, reply: placed.reply };
-  }
+  const negotiation =
+    store.latestNegotiation(customerId, product.id) ||
+    store.activeNegotiation(customerId, product.id);
+
+  const price =
+    negotiation?.agreedPrice ??
+    negotiation?.currentAsk ??
+    product.price;
+
+  const placed = placeOrder(customerId, product, price);
+
+  return {
+    agentType: "PAYMENT" as const,
+    reply: placed.reply,
+  };
+}
 
   if (agentType === "NEGOTIATION" || extractLooksLikeOffer(t, product)) {
     if (!product) {
